@@ -35,6 +35,7 @@ end
 
 module_list.each do |m|
   dirname = ''
+  module_languages = []
   languages.each do |l|
     module_request_url = module_url + m[module_number_attribute] + "&clang=#{l}"
     module_document = Nokogiri::HTML(HTTParty.get(module_request_url))
@@ -44,6 +45,8 @@ module_list.each do |m|
     if module_data.empty?
       puts "No #{l} translation for #{m[module_number_attribute]}!"
       next
+    else
+      module_languages << l
     end
     module_builder = Nokogiri::XML::Builder.new do |xml|
       xml.competency('xmlns' => 'https://ictorg.ch/competency', 'xmlns:xsi' => 'http://www.w3.org/2001/XMLSchema-instance', 'xsi:schemaLocation' => 'https://ictorg.ch/competency ../../../schema/competency.xsd') {
@@ -92,6 +95,18 @@ module_list.each do |m|
     File.open(output_directory + dirname + "/#{l}-ch.xml", 'w') do |file|
       file.write module_builder.to_xml(encoding: "UTF-8", indent: 4)
     end
+  end
+  module_builder = Nokogiri::XML::Builder.new do |xml|
+    xml.competency('xmlns' => 'https://ictorg.ch/competency', 'xmlns:xsi' => 'http://www.w3.org/2001/XMLSchema-instance', 'xsi:schemaLocation' => 'https://ictorg.ch/competency ../../../schema/competency.xsd') {
+      module_languages.each do |l|
+        xml.description('xml:lang' => "#{l}-ch") {
+          xml.text("./#{dirname}/#{l}-ch.xml")
+        }
+      end
+    }
+  end
+  File.open(output_directory + "/#{dirname}.xml", 'w') do |file|
+    file.write module_builder.to_xml(encoding: "UTF-8", indent: 4)
   end
   puts "Scraped module #{m[module_number_attribute]}."
 end
