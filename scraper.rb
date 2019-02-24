@@ -1,7 +1,9 @@
 require 'httparty'
 require 'nokogiri'
+require 'active_support/all'
 
 output_directory = './out/'.freeze
+languages = %w(de it fr)
 
 index_url = 'https://cf.ict-berufsbildung.ch/modules.php?name=Mbk&a=20100'.freeze
 module_list_selector = 'div.item:nth-child(3) > form:nth-child(3) > line:nth-child(2) > div:nth-child(2) > z:nth-child(1)'.freeze
@@ -32,28 +34,64 @@ unless module_list
 end
 
 module_list.each do |m|
-  module_document = Nokogiri::HTML(HTTParty.get(module_url + m[module_number_attribute]))
-  module_data = module_document.css(module_data_selector)
+  dirname = ''
+  languages.each do |l|
+    module_request_url = module_url + m[module_number_attribute] + "&clang=#{l}"
+    module_document = Nokogiri::HTML(HTTParty.get(module_request_url))
+    module_data = module_document.css(module_data_selector)
+    module_table_data = module_data.css('> dd:nth-child(6) > table > tbody > tr')
 
-  module_builder = Nokogiri::XML::Builder.new do |xml|
-    xml.competency('xmlns' => 'https://ictorg.ch/competency', 'xmlns:xsi' => 'http://www.w3.org/2001/XMLSchema-instance', 'xsi:schemaLocation' => 'https://ictorg.ch/competency ../../../schema/competency.xsd') {
-      xml.meta {
-        xml.provider('name' => 'ICT-Berufsbildung') {
-          xml.id_ m[module_number_attribute]
-          xml.reference module_url + m[module_number_attribute]
-          xml.level module_data.css('dd:nth-child(12)').first.text
-          xml.lessons module_data.css('dd:nth-child(16)').first.text
-          xml.achnowledgment module_data.css('dd:nth-child(18)').first.text
+    if module_data.empty?
+      puts "No #{l} translation for #{m[module_number_attribute]}!"
+      next
+    end
+    module_builder = Nokogiri::XML::Builder.new do |xml|
+      xml.competency('xmlns' => 'https://ictorg.ch/competency', 'xmlns:xsi' => 'http://www.w3.org/2001/XMLSchema-instance', 'xsi:schemaLocation' => 'https://ictorg.ch/competency ../../../schema/competency.xsd') {
+        xml.meta {
+          xml.provider('name' => 'ICT-Berufsbildung') {
+            xml.id_ m[module_number_attribute]
+            xml.reference module_request_url.gsub(/&/, '%26')
+            xml.level module_data.css('dd:nth-child(12)').first.text
+            xml.lessons module_data.css('dd:nth-child(16)').first.text
+            xml.achnowledgment module_data.css('dd:nth-child(18)').first.text
+          }
+        }
+        xml.title module_data.css('dd:nth-child(2)').first.text
+        xml.capability module_data.css('dd:nth-child(4)').first.text
+        xml.goals {
+          module_table_data.each_with_index do |t, i|
+            if i%2 == 0
+              xml.goal {
+                xml.text("\n#{' '*12}")
+                xml.text(t.css('> td:nth-child(2)').first.text)
+                xml.text("\n#{' '*12}")
+                xml.send('knowledge-list') {
+                  xml.text("\n#{' '*16}")
+                  knowledge = module_table_data[i+1].css('table > tr')
+                  knowledge.each_with_index do |tt, ii|
+                    xml.knowledge "\n#{' '*20}" + tt.css('> td:nth-child(2)').text + "\n#{' '*16}"
+                    if ii == knowledge.length - 1
+                      xml.text("\n#{' ' * 12}")
+                    else
+                      xml.text("\n#{' ' * 16}")
+                    end
+                  end
+                }
+                xml.text("\n#{' '*8}")
+              }
+            end
+          end
         }
       }
-      xml.title module_data.css('dd:nth-child(2)').first.text
-      xml.capability module_data.css('dd:nth-child(4)').first.text
-      xml.goals
-    }
-  end
+    end
+    if l == 'de'
+      dirname = ActiveSupport::Inflector::parameterize(module_data.css('dd:nth-child(2)').first.text)
+      Dir.mkdir(output_directory + dirname)
+    end
 
-  File.open(output_directory + 'test.xml', 'w') do |file|
-    file.write module_builder.to_xml(encoding: "UTF-8")
+    File.open(output_directory + dirname + "/#{l}-ch.xml", 'w') do |file|
+      file.write module_builder.to_xml(encoding: "UTF-8", indent: 4)
+    end
   end
-  exit 1
+  puts "Scraped module #{m[module_number_attribute]}."
 end
